@@ -1,0 +1,571 @@
+Index: app/Http/Controllers/Api/ActuacionesController.php
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><?php\r\n\r\nnamespace App\\Http\\Controllers\\Api;\r\n\r\nuse App\\Http\\Controllers\\Controller;\r\nuse Illuminate\\Http\\Request;\r\nuse App\\Models\\ActuacionesModel;\r\nuse App\\Http\\Requests\\ActuacionesFormRequest;\r\nuse App\\Http\\Requests\\AgregarUsuarioFirmaMecanicaFormRequest;\r\nuse App\\Http\\Resources\\Actuaciones\\ActuacionesCollection;\r\nuse App\\Http\\Resources\\ArchivoActuaciones\\ArchivoActuacionesCollection;\r\nuse App\\Http\\Resources\\Actuaciones\\ActuacionesResource;\r\nuse App\\Http\\Resources\\LogProcesoDisciplinario\\LogProcesoDisciplinarioResource;\r\nuse App\\Http\\Resources\\ArchivoActuaciones\\ArchivoActuacionesResource;\r\nuse Illuminate\\Support\\Facades\\DB;\r\nuse App\\Repositories\\RepositoryGeneric;\r\nuse App\\Models\\ArchivoActuacionesModel;\r\nuse App\\Models\\TrazabilidadActuacionesModel;\r\nuse App\\Models\\MasActuacionesModel;\r\nuse App\\Models\\LogProcesoDisciplinarioModel;\r\nuse App\\Models\\FirmaActuacionesModel;\r\nuse App\\Models\\User;\r\nuse App\\Models\\ProcesoDiciplinarioModel;\r\nuse App\\Http\\Resources\\TrazabilidadActuaciones\\TrazabilidadActuacionesResource;\r\nuse App\\Http\\Resources\\TrazabilidadActuaciones\\TrazabilidadActuacionesCollection;\r\nuse App\\Http\\Resources\\FirmaActuaciones\\FirmaActuacionesResource;\r\nuse App\\Http\\Resources\\FirmaActuaciones\\FirmaActuacionesCollection;\r\nuse App\\Http\\Controllers\\Api\\WordDocController;\r\nuse App\\Http\\Utilidades\\Constants;\r\nuse App\\Http\\Controllers\\Traits\\LogTrait;\r\nuse App\\Services\\WordServices;\r\nuse App\\Http\\Controllers\\Traits\\MailTrait;\r\n\r\nclass ActuacionesController extends Controller\r\n{\r\n    use MailTrait;\r\n\r\n    private $repository;\r\n    private $wordService;\r\n\r\n\r\n    public function __construct(RepositoryGeneric $repository, WordServices $wordService)\r\n    {\r\n        $this->repository = $repository;\r\n        $this->repository->setModel(new ActuacionesModel());\r\n        $this->wordService = $wordService;\r\n    }\r\n\r\n    /**\r\n     * Display a listing of the resource.\r\n     *\r\n     * @return \\Illuminate\\Http\\Response\r\n     */\r\n    public function index(Request $request)\r\n    {\r\n        return ActuacionesCollection::make($this->repository->paginate($request->limit ?? 20));\r\n    }\r\n\r\n    /**\r\n     * Store a newly created resource in storage.\r\n     *\r\n     * @param  \\Illuminate\\Http\\Request  $request\r\n     * @return \\Illuminate\\Http\\Response\r\n     */\r\n    public function store(ActuacionesFormRequest $request)\r\n    {\r\n        try {\r\n\r\n            // Se inicializa la conexion\r\n            DB::connection()->beginTransaction();\r\n\r\n            // Se capturan los datos\r\n            $datosRequest = $request->validated();\r\n\r\n            // Se captura la fecha\r\n            $año = date(\"Y\");\r\n            $mes = date(\"m\");\r\n            $dia = date(\"d\");\r\n            $hor = date(\"h\");\r\n            $min = date(\"i\");\r\n            $sec = date(\"s\");\r\n            $actuacionesNombreCarpeta = \"actuaciones\";\r\n\r\n            // Se valida el archivo\r\n            //$rutaRelativaArchivo = '/files' . '/' . $actuacionesNombreCarpeta . '/' . $año . '/' . $mes . '/' . $dia . '/' . $año . $mes . $dia . $hor . $min . $sec . '_' . $datosRequest['nombre_archivo'];  //MODIFICACION ANTERIOR\r\n            $rutaRelativaArchivo = '/files' . '/' . $actuacionesNombreCarpeta . '/' . $año . $mes . $dia . $hor . $min . $sec . '_' . $datosRequest['nombre_archivo'];   //MODIFICACION NUEVA\r\n            $rutaCompleta = storage_path() . $rutaRelativaArchivo;\r\n            //$path = storage_path() . '/files' . '/' . $actuacionesNombreCarpeta . '/' . $año . '/' . $mes . '/' . $dia;  //MODIFICACION ANTERIOR\r\n            $path = storage_path() . '/files' . '/' . $actuacionesNombreCarpeta;   //MODIFICACION NUEVA\r\n\r\n            // Se valida que si no existe se crea la carpeta\r\n            if (!file_exists($path)) {\r\n                mkdir($path, 0777, true);\r\n            }\r\n\r\n            // Campos de la tabla\r\n            $datosRequest['id_actuacion'] = $datosRequest['id_actuacion'];\r\n            $datosRequest['usuario_accion'] = \"\";\r\n            $datosRequest['id_estado_actuacion'] = $datosRequest['id_estado_actuacion'];\r\n            $datosRequest['documento_ruta'] = $rutaRelativaArchivo;\r\n            $datosRequest[\"estado\"] = true;\r\n            $datosRequest['created_user'] = auth()->user()->name;\r\n            $datosRequest['updated_user'] = \"\";\r\n            $datosRequest['updated_at'] = \"\";\r\n            $datosRequest['uuid_proceso_disciplinario'] = $datosRequest['id_proceso_disciplinario'];\r\n            $datosRequest['id_etapa'] = $datosRequest['id_etapa'];\r\n            $datosRequest['id_dependencia'] = auth()->user()->id_dependencia;\r\n\r\n            $b64 = $datosRequest['fileBase64'];\r\n            $bin = base64_decode($b64, true);\r\n            file_put_contents($rutaCompleta, $bin);\r\n\r\n            // Se manda el array del modelo con su informacion para crearlo en su tabla\r\n            $respuesta = ActuacionesResource::make($this->repository->create($datosRequest));\r\n            $array = json_decode(json_encode($respuesta));\r\n\r\n            // Se captura el uuid y el documento generado por la tabla\r\n            $uuid = $array->id;\r\n            $documento = $array->attributes->documento_ruta;\r\n            $codigo_tipo_archivo = \"DOCINI\";\r\n            $consultaIdTipoArchivo = $this->consultarIdTipoArchivo($codigo_tipo_archivo);\r\n            $id_tipo_archivo = $consultaIdTipoArchivo[0]->id;\r\n            $datosRequestTipoArchivo[\"uuid_actuacion\"] = $uuid;\r\n            $datosRequestTipoArchivo[\"id_tipo_archivo\"] = $id_tipo_archivo;\r\n            $datosRequestTipoArchivo[\"nombre_archivo\"] = $documento;\r\n            $datosRequestTipoArchivo['created_user'] = auth()->user()->name;\r\n            $datosRequestTipoArchivo[\"nombre_archivo\"] = $datosRequest[\"nombre_archivo\"];\r\n            $datosRequestTipoArchivo[\"extension\"] = $datosRequest[\"ext\"];\r\n            $datosRequestTipoArchivo[\"peso\"] = $datosRequest[\"peso\"];\r\n            $datosRequestTipoArchivo[\"documento_ruta\"] = $rutaRelativaArchivo;\r\n\r\n            // Se manda el array del modelo con su informacion para crearlo en su tabla\r\n            $ArchivoActuacionesModel = new ArchivoActuacionesModel();\r\n            ArchivoActuacionesResource::make($ArchivoActuacionesModel->create($datosRequestTipoArchivo));\r\n\r\n            // Se crea los datos para la tabla de trazabilidad de las actuaciones\r\n            $uuidActuacion = $array->id;\r\n            $datosRequestTrazabilidad[\"uuid_actuacion\"] = $uuidActuacion;\r\n            $codigo_estado_actuacion = \"PENAPR\";\r\n            $consultaEstadoActuacion = $this->consultarEstadoActuacion($codigo_estado_actuacion);\r\n            $idEstadoActuacion = $consultaEstadoActuacion[0]->id;\r\n            $datosRequestTrazabilidad[\"id_estado_actuacion\"] = $idEstadoActuacion;\r\n            $datosRequestTrazabilidad[\"observacion\"] = \"Actuacion en estado de pendiente de aprobación\";\r\n            $datosRequestTrazabilidad[\"estado\"] = true;\r\n            $datosRequestTrazabilidad['created_user'] = auth()->user()->name;\r\n            $datosRequestTrazabilidad['id_dependencia'] = auth()->user()->id_dependencia;\r\n\r\n            // Se manda el array del modelo con su informacion para crearlo en su tabla\r\n            $TrazabilidadActuacionesModel = new TrazabilidadActuacionesModel();\r\n            TrazabilidadActuacionesResource::make($TrazabilidadActuacionesModel->create($datosRequestTrazabilidad));\r\n\r\n            // Se consultan los datos de la actuacion por el id\r\n            $masActuacionesController = new RepositoryGeneric();\r\n            $masActuacionesController->setModel(new MasActuacionesModel());\r\n            $masActuacionesData = $masActuacionesController->customQuery(function ($model) use ($datosRequest) {\r\n                return\r\n                    $model->where('id', $datosRequest['id_actuacion'])->get();\r\n            });\r\n            $nombreActuacion = $masActuacionesData[0][\"nombre_actuacion\"];\r\n\r\n            // LOG PROCESO DISCIPLINARIO\r\n            $logRequest['id_proceso_disciplinario'] = $datosRequest['id_proceso_disciplinario'];\r\n            $logRequest['id_etapa'] =  LogTrait::etapaActual($datosRequest['id_proceso_disciplinario']);\r\n            $logRequest['id_tipo_log'] = Constants::TIPO_LOG['etapa']; // Log de tipo Etapa\r\n            $logRequest['id_estado'] = Constants::ESTADO_PROCESO_DISCIPLINARIO['remitido'];\r\n            $logRequest['descripcion'] = \"Se registro la actuación \" . $nombreActuacion;\r\n            $logRequest['id_dependencia_origen'] = auth()->user()->id_dependencia;\r\n            $logRequest['id_fase'] = Constants::FASE['actuaciones_evaluacion_pd'];\r\n            $logRequest['id_funcionario_actual'] = \"\";\r\n            $logRequest['id_funcionario_asignado'] = \"\";\r\n            $logRequest['id_funcionario_registra'] =  $datosRequest['created_user'];\r\n            $logRequest['id_tipo_expediente'] = \"\";\r\n            $logRequest['id_tipo_sub_expediente'] = \"\";\r\n            $logRequest['id_tipo_transaccion'] = Constants::TIPO_DE_TRANSACCION['cierre_etapa'];\r\n            $logRequest['id_fase_registro'] = $array->id;\r\n            $logModel = new LogProcesoDisciplinarioModel();\r\n            LogProcesoDisciplinarioResource::make($logModel->create($logRequest));\r\n\r\n            // Se guarda la ejecucion con un commit para que se ejecute\r\n            DB::connection()->commit();\r\n\r\n            // Se retorna la respuesta\r\n            return $respuesta;\r\n        } catch (\\Exception $e) {\r\n            error_log($e);\r\n            // Woopsy\r\n            DB::connection()->rollBack();\r\n            return response()->json(array(\r\n                'code'      =>  500,\r\n                'message'   =>  $e->getMessage()\r\n            ), 500);\r\n        }\r\n    }\r\n\r\n    /**\r\n     * Display the specified resource.\r\n     *\r\n     * @param  int  $id\r\n     * @return \\Illuminate\\Http\\Response\r\n     */\r\n    public function show($id)\r\n    {\r\n        return ActuacionesResource::make($this->repository->find($id));\r\n    }\r\n\r\n    /**\r\n     * Update the specified resource in storage.\r\n     *\r\n     * @param  \\Illuminate\\Http\\Request  $request\r\n     * @param  int  $id\r\n     * @return \\Illuminate\\Http\\Response\r\n     */\r\n    public function update(ActuacionesFormRequest $request,  $id)\r\n    {\r\n        return ActuacionesResource::make($this->repository->update($request->validated(), $id));\r\n    }\r\n\r\n    /**\r\n     * Remove the specified resource from storage.\r\n     *\r\n     * @param  int  $id\r\n     * @return \\Illuminate\\Http\\Response\r\n     */\r\n    public function destroy($id)\r\n    {\r\n    }\r\n\r\n\r\n    /**\r\n     * Método que lista las actuaciones donde el uuid del disciplinario y la etapa entren registradas\r\n     *\r\n     */\r\n    public function getActuacionesDisciplinarioEtapa($uuidDisciplinario, $etapa, $estado = 1)\r\n    {\r\n        $query = $this->repository->customQuery(function ($model) use ($uuidDisciplinario, $etapa, $estado) {\r\n            return $model->where('uuid_proceso_disciplinario', $uuidDisciplinario)\r\n                ->where('id_etapa', $etapa)\r\n                ->where('estado', $estado)\r\n                ->orderBy('created_at', 'desc')\r\n                ->get();\r\n        });\r\n\r\n        return ActuacionesCollection::make($query);\r\n    }\r\n\r\n    public function getActuacionesDisciplinarioEtapaYDocumentoFinal($uuidDisciplinario, $etapa, $estado)\r\n    {\r\n        $query = $this->repository->customQuery(function ($model) use ($uuidDisciplinario, $etapa, $estado) {\r\n            return $model->where('uuid_proceso_disciplinario', $uuidDisciplinario)\r\n                ->where('id_etapa', $etapa)\r\n                ->where('estado', $estado)\r\n                ->orderBy('created_at', 'desc')\r\n                ->get();\r\n        });\r\n\r\n        $arr = array();\r\n        $this->repository->setModel(new ArchivoActuacionesModel());\r\n\r\n        $masActuacionesController = new RepositoryGeneric();\r\n        $masActuacionesController->setModel(new TrazabilidadActuacionesModel());\r\n\r\n        foreach (ActuacionesCollection::make($query) as $key => $value) {\r\n\r\n            $uuidActuaciones = ActuacionesCollection::make($query)[$key]->uuid;\r\n\r\n            $query2 = $this->repository->customQuery(function ($model) use ($uuidActuaciones) {\r\n                return $model\r\n                    ->where('uuid_actuacion', $uuidActuaciones)\r\n                    ->where('id_tipo_archivo', 2)\r\n                    ->get();\r\n            });\r\n\r\n            // Se trae el usuario que ejecuto la aprobacion o rechazo\r\n            $query3 = $masActuacionesController->customQuery(function ($model) use ($uuidActuaciones) {\r\n                return $model\r\n                    ->where('uuid_actuacion', $uuidActuaciones)\r\n                    ->whereIn('id_estado_actuacion', [1, 2])\r\n                    ->get();\r\n            });\r\n\r\n            array_push(\r\n                $arr,\r\n                array(\r\n                    \"type\" => \"buscador\",\r\n                    \"attributes\" => array(\r\n                        \"actuacion\" => ActuacionesCollection::make($query)[$key],\r\n                        \"ArchivoFinalPdf\" => ArchivoActuacionesCollection::make($query2)->first(),\r\n                        \"UsuarioAprobacion\" => TrazabilidadActuacionesCollection::make($query3)->first(),\r\n                    )\r\n                )\r\n            );\r\n        }\r\n\r\n        $rtaFinal = array(\r\n            \"data\" => $arr\r\n        );\r\n\r\n        // error_log(\"rtaFinal -> \" . json_encode($rtaFinal));\r\n\r\n        return json_encode($rtaFinal);\r\n    }\r\n\r\n    /**\r\n     * Método que lista las actuaciones del sistema creadas y ordenadas por fecha de creacion\r\n     *\r\n     */\r\n    public function getAllActuaciones(Request $request)\r\n    {\r\n        $results = DB::select(DB::raw(\"SELECT a.uuid, a.id_actuacion, a.usuario_accion, ma.nombre_actuacion, a.id_estado_actuacion, mea.nombre as nombre_estado_actuacion, a.documento_ruta,\r\n        a.created_user\r\n        FROM actuaciones a\r\n        INNER JOIN mas_actuaciones ma on ma.id = a.id_actuacion\r\n        INNER JOIN mas_estado_actuaciones mea on mea.id = a.id_estado_actuacion\r\n        ORDER BY a.created_at asc\"));\r\n    }\r\n\r\n    /**\r\n     * Método que consulta el id del tipo de archivo de las actuaciones por codigo\r\n     *\r\n     */\r\n    public function consultarIdTipoArchivo($params)\r\n    {\r\n        $results = DB::select(DB::raw(\"select id from mas_tipo_archivo_actuaciones where codigo = '$params'\"));\r\n        return json_decode(json_encode($results));\r\n    }\r\n\r\n    /**\r\n     * Método que consulta el id del estado de la actuacion por el codigo\r\n     *\r\n     */\r\n    public function consultarEstadoActuacion($params)\r\n    {\r\n        $results = DB::select(DB::raw(\"select id from mas_estado_actuaciones where codigo = '$params'\"));\r\n        return json_decode(json_encode($results));\r\n    }\r\n\r\n    /**\r\n     * Método que busca la actuacion por el id\r\n     *\r\n     */\r\n    public function getDatosActuacion($id)\r\n    {\r\n        $query = $this->repository->customQuery(function ($model) use ($id) {\r\n            return $model->where('id', $id)\r\n                ->get();\r\n        });\r\n        return ActuacionesCollection::make($query);\r\n    }\r\n\r\n    /**\r\n     * Método que busca todas las actuaciones por el estado activo y el id de la etapa actual\r\n     *\r\n     */\r\n    public function getActuacionesEstadoActivo($status = 1, $id_etapa)\r\n    {\r\n        $query = $this->repository->customQuery(function ($model) use ($status, $id_etapa) {\r\n            return $model->where('estado', $status)\r\n                ->where(\"id_etapa\", $id_etapa)\r\n                ->get();\r\n        });\r\n\r\n        return ActuacionesCollection::make($query);\r\n    }\r\n\r\n    /**\r\n     * Método que inactiva las actuaciones seleccionadas\r\n     *\r\n     */\r\n    public function actuacionesInactivar(ActuacionesFormRequest $request)\r\n    {\r\n        // Se inicializa la conexion\r\n        DB::connection()->beginTransaction();\r\n\r\n        // Se capturan los datos\r\n        $datosRequest = $request->validated();\r\n\r\n        // Se captura la informacion a actualizar\r\n        $data = $datosRequest[\"data\"];\r\n        $cantidadDatos = count($data);\r\n        $actualizo = 0;\r\n\r\n        // Se recorre el array de las actuaciones\r\n        foreach ($data as $key => $value) {\r\n\r\n            // Se captura el uuid de las actuaciones a inactivar\r\n            $uuidActuacion = $value[\"id\"];\r\n\r\n            // Se inactiva el estado de las actuaciones seleccionadas\r\n            $actualizo = ActuacionesModel::where('UUID', $uuidActuacion)->update(['estado' => 0]);\r\n\r\n            // Se guarda la ejecucion con un commit para que se ejecute\r\n            DB::connection()->commit();\r\n        }\r\n\r\n        // Se retorna el valor\r\n        return [\"OK\" => $actualizo];\r\n    }\r\n\r\n\r\n    public function agregarUsuarioParaFirmaMecanica(AgregarUsuarioFirmaMecanicaFormRequest $request)\r\n    {\r\n\r\n        try {\r\n\r\n            // Se inicializa la conexion\r\n            DB::connection()->beginTransaction();\r\n\r\n            // Se capturan los datos\r\n            $datosRequest = $request->validated();\r\n\r\n            $this->repository->setModel(new FirmaActuacionesModel());\r\n\r\n            $query = $this->repository->customQuery(function ($model) use ($datosRequest) {\r\n                return $model\r\n                    ->where('id_actuacion', $datosRequest[\"id_actuacion\"])\r\n                    ->where('id_user', $datosRequest[\"id_user\"])\r\n                    ->where('tipo_firma', $datosRequest[\"tipo_firma\"])\r\n                    ->get();\r\n            });\r\n\r\n            $ExisteEliminado = $this->repository->customQuery(function ($model) use ($datosRequest) {\r\n                return $model\r\n                    ->where('id_actuacion', $datosRequest[\"id_actuacion\"])\r\n                    ->where('id_user', $datosRequest[\"id_user\"])\r\n                    ->where('tipo_firma', $datosRequest[\"tipo_firma\"])\r\n                    ->where('estado', Constants::ESTADO_FIRMA_MECANICA['Eliminado'])\r\n                    ->get();\r\n            });\r\n\r\n            error_log(count($ExisteEliminado));\r\n\r\n\r\n            if (count($query) >= 1 && count($ExisteEliminado) < 1) {\r\n                $respuesta = \"El usuario ya se encuentra pendiente de firma en esta actuación\";\r\n            } else {\r\n                $datosRequest[\"estado\"] = 1;\r\n                $firmaModel = new FirmaActuacionesModel();\r\n                $respuesta = FirmaActuacionesResource::make($firmaModel->create($datosRequest));\r\n\r\n                try {\r\n                    $DatosProcesoDisciplinario = ProcesoDiciplinarioModel::where('uuid', $datosRequest[\"uuid_proceso_disciplinario\"])->first();\r\n                    $usuario = User::where('id', $datosRequest[\"id_user\"])->first();\r\n\r\n\r\n                    $correos = [$usuario->email];\r\n                    $nombre_usuario = $usuario->name;\r\n                    $asunto = \"SINPROC: (\" . $DatosProcesoDisciplinario->radicado . \") - VIGENCIA (\" . $DatosProcesoDisciplinario->vigencia . ')';\r\n                    $contenido = \"Estas pendiente de firmar un documento\";\r\n                    $archivos = null;\r\n                    $correoscc = null;\r\n                    $correosbbc = null;\r\n\r\n                    MailTrait::sendMail(\r\n                        $correos,\r\n                        $nombre_usuario,\r\n                        $asunto,\r\n                        $contenido,\r\n                        $archivos,\r\n                        $correoscc,\r\n                        $correosbbc\r\n                    );\r\n                } catch (\\Exception $th) {\r\n                    error_log($th);\r\n                }\r\n            }\r\n            // Se guarda la ejecucion con un commit para que se ejecute\r\n            DB::connection()->commit();\r\n\r\n            // Se retorna la respuesta\r\n            return $respuesta;\r\n        } catch (\\Exception $e) {\r\n            error_log($e);\r\n            // Woopsy\r\n            DB::connection()->rollBack();\r\n            return response()->json(array(\r\n                'code'      =>  500,\r\n                'message'   =>  $e->getMessage()\r\n            ), 500);\r\n        }\r\n    }\r\n\r\n    public function FirmasPorActuacion($id_actuacion)\r\n    {\r\n        try {\r\n            $this->repository->setModel(new FirmaActuacionesModel());\r\n            $query = $this->repository->customQuery(function ($model) use ($id_actuacion) {\r\n                return $model\r\n                    ->where('id_actuacion', $id_actuacion)\r\n                    ->orderBy('created_at', 'desc')\r\n                    ->get();\r\n            });\r\n            return FirmaActuacionesCollection::make($query);\r\n        } catch (\\Exception $e) {\r\n            error_log($e);\r\n            // Woopsy\r\n            DB::connection()->rollBack();\r\n            return response()->json(array(\r\n                'code'      =>  500,\r\n                'message'   =>  $e->getMessage()\r\n            ), 500);\r\n        }\r\n    }\r\n\r\n    public function FirmasPorUsuario($id_user)\r\n    {\r\n        try {\r\n            $this->repository->setModel(new FirmaActuacionesModel());\r\n            $query = $this->repository->customQuery(function ($model) use ($id_user) {\r\n                return $model\r\n                    ->where('id_user', $id_user)\r\n                    ->where('estado', \"!=\", Constants::ESTADO_FIRMA_MECANICA['Eliminado'])\r\n                    ->orderBy('created_at', 'desc')\r\n                    ->get();\r\n            });\r\n            return FirmaActuacionesCollection::make($query);\r\n        } catch (\\Exception $e) {\r\n            error_log($e);\r\n            // Woopsy\r\n            DB::connection()->rollBack();\r\n            return response()->json(array(\r\n                'code'      =>  500,\r\n                'message'   =>  $e->getMessage()\r\n            ), 500);\r\n        }\r\n    }\r\n\r\n    public function CambiarEstadoFirma(AgregarUsuarioFirmaMecanicaFormRequest $request, $id)\r\n    {\r\n        try {\r\n            // Se inicializa la conexion\r\n            DB::connection()->beginTransaction();\r\n\r\n            \r\n            $usersPorNotificar = array();\r\n            $datos = $request->validated();\r\n            \r\n            $DatosDocumento = ActuacionesModel::where('uuid', $datos[\"id_actuacion\"])->first();\r\n            $DatosProcesoDisciplinarioByActuacion = FirmaActuacionesModel::where('id_actuacion', $datos[\"id_actuacion\"])->get();\r\n            $uuid_proceso_disciplinario = $DatosProcesoDisciplinarioByActuacion[0]->uuid_proceso_disciplinario;\r\n            $DatosProcesoDisciplinario = ProcesoDiciplinarioModel::where('uuid', $uuid_proceso_disciplinario)->first();\r\n\r\n            foreach ($DatosProcesoDisciplinarioByActuacion as $key => $value) {\r\n                if($value->estado != Constants::ESTADO_FIRMA_MECANICA['Eliminado']){\r\n                    array_push($usersPorNotificar , $value->id_user);\r\n                }\r\n            }\r\n\r\n            $LimpioUsersPorNotificar = array_unique($usersPorNotificar);\r\n\r\n            foreach ($LimpioUsersPorNotificar as $key => $value) {\r\n                $usuario = User::where('id', $value)->first();\r\n                \r\n                $correos = [$usuario->email];\r\n                $nombre_usuario = $usuario->name;\r\n                $asunto = \"SINPROC: (\" . $DatosProcesoDisciplinario->radicado . \") - VIGENCIA (\" . $DatosProcesoDisciplinario->vigencia . ')';\r\n                $contenido = \"El usuario \".auth()->user()->name.\" ha firmado el documento \". substr($DatosDocumento->documento_ruta , 34);\r\n                $archivos = null;\r\n                $correoscc = null;\r\n                $correosbbc = null;\r\n\r\n                MailTrait::sendMail(\r\n                    $correos,\r\n                    $nombre_usuario,\r\n                    $asunto,\r\n                    $contenido,\r\n                    $archivos,\r\n                    $correoscc,\r\n                    $correosbbc\r\n                );\r\n            }\r\n\r\n            $this->repository->setModel(new FirmaActuacionesModel());\r\n\r\n            // Se inicializa el controlador del documento\r\n            $wordFirma = $this->wordService->wordDocImages($datos);\r\n            return $wordFirma;\r\n\r\n\r\n            $respuesta = FirmaActuacionesResource::make($this->repository->update($request->validated(), $id));\r\n            DB::connection()->commit();\r\n\r\n            return $respuesta;\r\n        } catch (\\Exception $e) {\r\n            error_log($e);\r\n            // Woopsy\r\n            DB::connection()->rollBack();\r\n            return response()->json(array(\r\n                'code'      =>  500,\r\n                'message'   =>  $e->getMessage()\r\n            ), 500);\r\n        }\r\n    }\r\n\r\n    public function EliminarFirmaMecanicaDeActuacion(AgregarUsuarioFirmaMecanicaFormRequest $request, $id)\r\n    {\r\n        try {\r\n            // Se inicializa la conexion\r\n            DB::connection()->beginTransaction();\r\n\r\n            $this->repository->setModel(new FirmaActuacionesModel());\r\n\r\n            $respuesta = FirmaActuacionesResource::make($this->repository->update($request->validated(), $id));\r\n            DB::connection()->commit();\r\n\r\n            return $respuesta;\r\n        } catch (\\Exception $e) {\r\n            error_log($e);\r\n            // Woopsy\r\n            DB::connection()->rollBack();\r\n            return response()->json(array(\r\n                'code'      =>  500,\r\n                'message'   =>  $e->getMessage()\r\n            ), 500);\r\n        }\r\n    }\r\n}
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- app/Http/Controllers/Api/ActuacionesController.php	(revision afe7d11b447449a003baadfcca1901de62405038)
++++ app/Http/Controllers/Api/ActuacionesController.php	(date 1663155892060)
+@@ -243,7 +243,7 @@
+         return ActuacionesCollection::make($query);
+     }
+ 
+-    public function getActuacionesDisciplinarioEtapaYDocumentoFinal($uuidDisciplinario, $etapa, $estado)
++    public function getActuacionesDisciplinarioEtapaYDocumentoFinal($uuidDisciplinario, $etapa, $estado = 1)
+     {
+         $query = $this->repository->customQuery(function ($model) use ($uuidDisciplinario, $etapa, $estado) {
+             return $model->where('uuid_proceso_disciplinario', $uuidDisciplinario)
+@@ -524,74 +524,7 @@
+         }
+     }
+ 
+-    public function CambiarEstadoFirma(AgregarUsuarioFirmaMecanicaFormRequest $request, $id)
+-    {
+-        try {
+-            // Se inicializa la conexion
+-            DB::connection()->beginTransaction();
+-
+-            
+-            $usersPorNotificar = array();
+-            $datos = $request->validated();
+-            
+-            $DatosDocumento = ActuacionesModel::where('uuid', $datos["id_actuacion"])->first();
+-            $DatosProcesoDisciplinarioByActuacion = FirmaActuacionesModel::where('id_actuacion', $datos["id_actuacion"])->get();
+-            $uuid_proceso_disciplinario = $DatosProcesoDisciplinarioByActuacion[0]->uuid_proceso_disciplinario;
+-            $DatosProcesoDisciplinario = ProcesoDiciplinarioModel::where('uuid', $uuid_proceso_disciplinario)->first();
+-
+-            foreach ($DatosProcesoDisciplinarioByActuacion as $key => $value) {
+-                if($value->estado != Constants::ESTADO_FIRMA_MECANICA['Eliminado']){
+-                    array_push($usersPorNotificar , $value->id_user);
+-                }
+-            }
+-
+-            $LimpioUsersPorNotificar = array_unique($usersPorNotificar);
+-
+-            foreach ($LimpioUsersPorNotificar as $key => $value) {
+-                $usuario = User::where('id', $value)->first();
+-                
+-                $correos = [$usuario->email];
+-                $nombre_usuario = $usuario->name;
+-                $asunto = "SINPROC: (" . $DatosProcesoDisciplinario->radicado . ") - VIGENCIA (" . $DatosProcesoDisciplinario->vigencia . ')';
+-                $contenido = "El usuario ".auth()->user()->name." ha firmado el documento ". substr($DatosDocumento->documento_ruta , 34);
+-                $archivos = null;
+-                $correoscc = null;
+-                $correosbbc = null;
+-
+-                MailTrait::sendMail(
+-                    $correos,
+-                    $nombre_usuario,
+-                    $asunto,
+-                    $contenido,
+-                    $archivos,
+-                    $correoscc,
+-                    $correosbbc
+-                );
+-            }
+-
+-            $this->repository->setModel(new FirmaActuacionesModel());
+-
+-            // Se inicializa el controlador del documento
+-            $wordFirma = $this->wordService->wordDocImages($datos);
+-            return $wordFirma;
+-
+-
+-            $respuesta = FirmaActuacionesResource::make($this->repository->update($request->validated(), $id));
+-            DB::connection()->commit();
+-
+-            return $respuesta;
+-        } catch (\Exception $e) {
+-            error_log($e);
+-            // Woopsy
+-            DB::connection()->rollBack();
+-            return response()->json(array(
+-                'code'      =>  500,
+-                'message'   =>  $e->getMessage()
+-            ), 500);
+-        }
+-    }
+-
+-    public function EliminarFirmaMecanicaDeActuacion(AgregarUsuarioFirmaMecanicaFormRequest $request, $id)
++    public function EliminarFirmaMecanica(AgregarUsuarioFirmaMecanicaFormRequest $request, $id)
+     {
+         try {
+             // Se inicializa la conexion
+@@ -599,10 +532,18 @@
+ 
+             $this->repository->setModel(new FirmaActuacionesModel());
+ 
+-            $respuesta = FirmaActuacionesResource::make($this->repository->update($request->validated(), $id));
+-            DB::connection()->commit();
++            $data = $request->validated();
++            $nombreArchivo = $data["nombre_documento"];
++            $nombreArchivoFirma = $data["ruta_image"];
++
++            $servicioFirma = $this->wordService->wordDocImages($nombreArchivo, $nombreArchivoFirma);
++            error_log("servicioFirma -> " . json_encode($servicioFirma));
++            return $servicioFirma;
+ 
+-            return $respuesta;
++            // $respuesta = FirmaActuacionesResource::make($this->repository->update($request->validated(), $id));
++            // DB::connection()->commit();
++
++            // return $respuesta;
+         } catch (\Exception $e) {
+             error_log($e);
+             // Woopsy
+Index: app/Services/WordServices.php
+IDEA additional info:
+Subsystem: com.intellij.openapi.diff.impl.patch.BaseRevisionTextPatchEP
+<+><?php\r\n\r\nnamespace App\\Services;\r\n\r\nuse ZipArchive;\r\nuse PhpOffice\\PhpWord\\TemplateProcessor;\r\nuse PhpOffice\\PhpWord\\IOFactory;\r\nuse PhpOffice\\PhpWord\\Settings;\r\nuse PhpOffice\\PhpWord\\PhpWord;\r\nuse App\\Models\\TipoUnidadModel;\r\n\r\nclass WordServices\r\n{\r\n    public function get_document_params($filename)\r\n    {\r\n        $striped_content = '';\r\n        $file_content = $this->get_document_content($filename);\r\n        $start_char = '${';\r\n        $end_char = \"}\";\r\n\r\n        // $content = '';\r\n        // $content = str_replace('</w:r></w:p></w:tc><w:tc>', \" \", $file_content);\r\n        // $content = str_replace('</w:r></w:p>', \"\\r\\n\", $file_content);\r\n        $striped_content = strip_tags($file_content);\r\n        $start_position = strpos($striped_content, $start_char, 0);\r\n        $params = array();\r\n\r\n        $end_position = strpos($striped_content, $end_char, $start_position);\r\n\r\n        // lad(\"prueba>>>>>>\");\r\n        // lad($start_char);\r\n        // lad($end_char);\r\n        // lad(\"<<<<<<<<\");\r\n\r\n        while ($start_position > 0) {\r\n            $end_position = strpos($striped_content, $end_char, $start_position);\r\n            // lad($start_position);\r\n            // lad($end_position);\r\n            if ($end_position > 0) {\r\n                $param = str_replace($start_char, \"\", substr($striped_content, $start_position, $end_position - $start_position));\r\n                // lad($param);\r\n                array_push($params, $param);\r\n            } else\r\n                break;\r\n            $start_position = strpos($striped_content, $start_char, $end_position);\r\n        }\r\n\r\n        $array = array(\r\n            //\"content\" => $content,\r\n            //\"striped_content\" => $striped_content,\r\n            \"params\" => $params,\r\n        );\r\n\r\n        return $array;\r\n    }\r\n\r\n\r\n    public function replace_document_params($filename, $params)\r\n    {\r\n        $guid =  bin2hex(openssl_random_pseudo_bytes(16));\r\n        $pathToSave = storage_path() . '/files/temp/';\r\n        $pathToFile = $pathToSave . $guid . '.docx';\r\n\r\n        if (!file_exists($pathToSave)) {\r\n            mkdir($pathToSave, 0777, true);\r\n        }\r\n\r\n        error_log(\"path -> \" . $pathToFile);\r\n        error_log(\"filename -> \" . $filename);\r\n\r\n        $templateProcessor = new TemplateProcessor($filename);\r\n\r\n        error_log(\"Word params: \" . json_encode($params));\r\n\r\n        foreach ($params as $p) {\r\n\r\n            if (empty($p[\"value\"]) || $p[\"value\"] == null || $p[\"value\"] == \"\") {\r\n                $p[\"value\"] = \"\";\r\n            }\r\n\r\n            $templateProcessor->setValue($p[\"param\"], $p[\"value\"]);\r\n        }\r\n\r\n        $templateProcessor->saveAs($pathToFile);\r\n\r\n        return $pathToFile;\r\n    }\r\n\r\n    public function replace_document_params_pdf($filename, $params)\r\n    {\r\n\r\n        // Se genera un uuid de 16 hex\r\n        $guid =  bin2hex(openssl_random_pseudo_bytes(16));\r\n\r\n        // Se genera la ruta donde se guardara el documento de word\r\n        $pathToSave = storage_path() . '/files/temp/';\r\n        $pathToFile = $pathToSave . $guid . '.docx';\r\n\r\n        // Se valida que si no existe se ce cree el archivo\r\n        if (!file_exists($pathToSave)) {\r\n            mkdir($pathToSave, 0777, true);\r\n        }\r\n\r\n        // Se inicializa el template\r\n        $templateProcessor = new TemplateProcessor($filename);\r\n\r\n        // Se recorren los parametros con cada valor\r\n        foreach ($params as $p) {\r\n\r\n            if (empty($p[\"value\"]) || $p[\"value\"] == null || $p[\"value\"] == \"\") {\r\n                $p[\"value\"] = \"\";\r\n            }\r\n\r\n            $templateProcessor->setValue($p[\"param\"], $p[\"value\"]);\r\n        }\r\n\r\n        // Se guarda el archivo word en la ruta\r\n        $templateProcessor->saveAs($pathToFile);\r\n\r\n        // Se inicializan las variables nuevamente\r\n        $filename = $pathToFile;\r\n        $guid =  bin2hex(openssl_random_pseudo_bytes(16));\r\n        $source = storage_path() . '/files/temp/' . $guid . '.pdf';\r\n\r\n        // Se renderiza el DoomPdf\r\n        Settings::setPdfRendererName(Settings::PDF_RENDERER_DOMPDF);\r\n        Settings::setPdfRendererPath('.');\r\n        $domPdfPath = realpath(realpath(__DIR__) . '/../vendor/dompdf/dompdf');\r\n        \\PhpOffice\\PhpWord\\Settings::setPdfRendererPath($domPdfPath);\r\n        \\PhpOffice\\PhpWord\\Settings::setPdfRendererName('DomPDF');\r\n\r\n        // Se carga el archivo word \r\n        $phpWord = \\PhpOffice\\PhpWord\\IOFactory::load($filename);\r\n\r\n        // Se crea una escritura del archivo en PDF\r\n        $objWriter = \\PhpOffice\\PhpWord\\IOFactory::createWriter($phpWord, 'PDF');\r\n\r\n        // Se guarda el archivo en la ruta \r\n        $objWriter->save($source);\r\n\r\n        // Se retorna la ruta del array del pdf y word para eliminarlos\r\n        $links = [\r\n            \"word\" => $filename,\r\n            \"pdf\" => $source\r\n        ];\r\n\r\n        // Se retorna el valor de la ruta\r\n        return $links;\r\n    }\r\n\r\n    public function replaceDocumentParamsArchivo($filename, $params, $nombreArchivo)\r\n    {\r\n        // Se captura la fecha\r\n        $año = date(\"Y\");\r\n        $mes = date(\"m\");\r\n        $dia = date(\"d\");\r\n        $hor = date(\"h\");\r\n        $min = date(\"i\");\r\n        $sec = date(\"s\");\r\n        $actuacionesNombreCarpeta = \"Actuaciones/\";\r\n        $temp = $año . $mes . $dia . $hor . $min . $sec . '_' . $nombreArchivo;\r\n        $rutaTemporalBaseDatos = \"/files/\" . $actuacionesNombreCarpeta . $temp;\r\n\r\n        $pathToSave = storage_path() . '/files/' . $actuacionesNombreCarpeta;\r\n        $pathToFile = $pathToSave . $temp;\r\n\r\n        // Si no exista la ruta se crea con permisos\r\n        if (!file_exists($pathToSave)) {\r\n            mkdir($pathToSave, 0777, true);\r\n        }\r\n\r\n        $templateProcessor = new TemplateProcessor($filename);\r\n\r\n        foreach ($params as $p) {\r\n\r\n            if (empty($p[\"value\"]) || $p[\"value\"] == null || $p[\"value\"] == \"\") {\r\n                $p[\"value\"] = \"\";\r\n            }\r\n\r\n            $templateProcessor->setValue($p[\"param\"], $p[\"value\"]);\r\n        }\r\n\r\n        $templateProcessor->saveAs($pathToFile);\r\n\r\n        return $rutaTemporalBaseDatos;\r\n    }\r\n\r\n    public function get_document_content($filename)\r\n    {\r\n        $zip = new ZipArchive();\r\n        if ($zip->open($filename)) {\r\n            $fp = $zip->getStream('word/document.xml'); //file inside archive\r\n            if (!$fp)\r\n                die(\"Error: can't get stream to zipped file\");\r\n            $stat = $zip->statName('word/document.xml');\r\n\r\n            $buf = \"\"; //file buffer\r\n            ob_start(); //to capture CRC error message\r\n            while (!feof($fp)) {\r\n                $buf .= fread($fp, 2048); //reading more than 2156 bytes seems to disable internal CRC32 verification (bug?)\r\n            }\r\n            $s = ob_get_contents();\r\n            ob_end_clean();\r\n            if (stripos($s, \"CRC error\") != FALSE) {\r\n                echo 'CRC32 mismatch, current ';\r\n                printf(\"%08X\", crc32($buf)); //current CRC\r\n                echo ', expected ';\r\n                printf(\"%08X\", $stat['crc']); //expected CRC\r\n            }\r\n\r\n            fclose($fp);\r\n            $zip->close();\r\n            //Done, unpacked file is stored in $buf\r\n        }\r\n\r\n        return $buf;\r\n    }\r\n\r\n\r\n    /**\r\n     * Retorna plantilla diligenciada con valores de parametros enviados en request\r\n     */\r\n    public function wordDocImages($data)\r\n    {\r\n\r\n        error_log(\"data -> \" . json_encode($data));\r\n\r\n        // Se inicializa la informacion en variables\r\n        $idActuacion = $data[\"id_actuacion\"];\r\n        $nombreArchivoDocumento = $data[\"nombre_documento\"];\r\n        $nombreArchivoFirma = $data[\"ruta_image\"];\r\n\r\n        // Se busca el documento\r\n        $pathDocumento = storage_path() . $nombreArchivoDocumento;\r\n        $pathImages = storage_path() . '/files/firmas/firma1_9F782C2.png';\r\n\r\n        error_log(\"---------------------------------------------------------------\");\r\n        error_log(\"idActuacion   -> \" . $idActuacion);\r\n        error_log(\"pathDocumento -> \" . $pathDocumento);\r\n        error_log(\"pathImages    -> \" . $pathImages);\r\n\r\n        // Se valida que existan los documentos\r\n        if (!file_exists($pathDocumento)) {\r\n            return [\r\n                \"error\" => \"El documento a firmar no existe o la ruta no es valida\"\r\n            ];\r\n        }\r\n\r\n        // Se valida que el archivo de la imagen de la firma exista\r\n        if (!file_exists($pathImages)) {\r\n            return [\r\n                \"error\" => \"La imagen de la firma no existe o la ruta no es valida\"\r\n            ];\r\n        }\r\n\r\n        error_log(\"llego al die\");\r\n\r\n        // Se inicializan las variables nuevamente\r\n        $filename = $pathDocumento;\r\n\r\n        // Se carga el archivo word \r\n        $phpWord = new TemplateProcessor($filename);\r\n\r\n        // Se añade la imagen\r\n        $phpWord->setImageValue(\r\n            'imagenAprobo',\r\n            array(\r\n                'path' => $pathImages,\r\n                'width' => 100,\r\n                'height' => 100,\r\n                'ratio' => false\r\n            )\r\n        );\r\n\r\n        $imagenReviso = '${imagenReviso}';\r\n        $imagenReviso2 = '${imagenReviso2}';\r\n        $imagenReviso3 = '${imagenReviso3}';\r\n\r\n        // $phpWord->setImageValue(\r\n        //     \"imagenReviso\",\r\n        //     array(\r\n        //         'path' => $pathImages,\r\n        //         'width' => 100,\r\n        //         'height' => 100,\r\n        //         'ratio' => true\r\n        //     )\r\n        // );\r\n\r\n        // $phpWord->setImageValue(\r\n        //     \"imagenReviso2\",\r\n        //     array(\r\n        //         'path' => $pathImages,\r\n        //         'width' => 100,\r\n        //         'height' => 100,\r\n        //         'ratio' => true\r\n        //     )\r\n        // );\r\n\r\n        // $phpWord->setImageValue(\r\n        //     'imagenReviso3',\r\n        //     array(\r\n        //         'path' => $pathImages,\r\n        //         'width' => 100,\r\n        //         'height' => 100,\r\n        //         'ratio' => true\r\n        //     )\r\n        // );\r\n\r\n        $phpWord->setValue(\"${imagenReviso}\", '11');\r\n\r\n        $phpWord->setImageValue(\r\n            '${imagenElaboro}',\r\n            array(\r\n                'path' => $pathImages,\r\n                'width' => 100,\r\n                'height' => 100,\r\n                'ratio' => false\r\n            )\r\n        );\r\n\r\n        // Ruta de almacenado\r\n        $guid =  bin2hex(openssl_random_pseudo_bytes(16));\r\n        $source = storage_path() . '/files/temp/' . $guid . '.docx';\r\n\r\n        // Se guarda el documento\r\n        $phpWord->saveAs($source);\r\n\r\n        error_log(\"source -> \" . $source);\r\n\r\n        // Se carga el archivo word \r\n        // $phpWord = new \\PhpOffice\\PhpWord\\PhpWord();\r\n        // $phpWord = $phpWord->loadTemplate($filename);\r\n\r\n        // // Se añade una seccion\r\n        // $section = $phpWord->addSection();\r\n\r\n        // // Se crea la tabla\r\n        // $tableStyle = array(\r\n        //     'borderColor' => '000000',\r\n        //     'borderSize'  => 10,\r\n        //     'cellMargin'  => 100,\r\n        //     'bold' => true,\r\n        //     'align' => 'center',\r\n        // );\r\n        // $firstRowStyle = array('bgColor' => 'FFFFFF');\r\n        // $phpWord->addTableStyle('x', $tableStyle, $firstRowStyle);\r\n        // $table = $section->addTable();\r\n\r\n        // // Se cuenta la cantidad de filas\r\n        // $cantidadFilas = 1;\r\n        // $cantidadColumnas = 1;\r\n\r\n        // // Se recorre la cantidad de filas\r\n        // for ($f = 0; $f <= $cantidadFilas - 1; $f++) {\r\n\r\n        //     // Se tiene en cuenta el numero de la fila\r\n        //     $numeroFila = $f;\r\n\r\n        //     // Se añade la fila\r\n        //     $table->addRow();\r\n\r\n        //     // Se recorre la cantidad de columnas\r\n        //     for ($c = 0; $c <= $cantidadColumnas; $c++) {\r\n\r\n        //         // Se tiene en cuenta el numero de la columna\r\n        //         $numeroColumna = $c;\r\n\r\n        //         // Se valida para insertar el dato en la columna\r\n        //         if ($numeroColumna == 0) {\r\n        //             $table->addCell(3000)->addText(\"Aprobo\", [\"bold\" => true], ['align' => 'center']);\r\n        //         } else if ($numeroColumna == 1) {\r\n        //             $table->addCell(1000)->addText(\"Reviso\", [], ['align' => 'center']);\r\n        //         } else if ($numeroColumna == 2) {\r\n        //             $table->addCell(5000)->addText(\"Elaboro\", [\"bold\" => true]);\r\n        //         } else {\r\n        //             continue;\r\n        //         }\r\n        //     }\r\n        // }\r\n\r\n        // Se añade la imagen con sus dimensiones\r\n        // $section->addImage(\r\n        //     $pathImages,\r\n        //     array(\r\n        //         'width' => 580,\r\n        //         'height' => 140,\r\n        //         'positioning' => \\PhpOffice\\PhpWord\\Style\\Image::POSITION_ABSOLUTE,\r\n        //         'posHorizontal' => \\PhpOffice\\PhpWord\\Style\\Image::POSITION_ABSOLUTE,\r\n        //         'posVertical' => \\PhpOffice\\PhpWord\\Style\\Image::POSITION_ABSOLUTE,\r\n        //         'marginLeft' => round(\\PhpOffice\\PhpWord\\Shared\\Converter::cmToPixel(17)),\r\n        //         'marginTop' => round(\\PhpOffice\\PhpWord\\Shared\\Converter::cmToPixel(-0.5)),\r\n        //         'wrappingStyle' => 'infront'\r\n        //     ),\r\n        //     true\r\n        // );\r\n\r\n        // // Se guarda el word\r\n        // $objWriter = \\PhpOffice\\PhpWord\\IOFactory::createWriter($phpWord, \"Word2007\");\r\n        // $objWriter->save($source);\r\n\r\n        // Se retorna la ruta del array del pdf y word para eliminarlos\r\n        $links = [\r\n            \"word\" => $source,\r\n        ];\r\n\r\n        error_log(\"guardo\");\r\n\r\n        // Se retorna el valor de la ruta\r\n        return $links;\r\n\r\n        // return response()->json($datos);\r\n    }\r\n\r\n    /**\r\n     * Metodo encargado de generar la segunda caratula dentro de ramas del proceso\r\n     */\r\n    public function generarCaratula($arrayInformacionProcesoDisciplinario = [])\r\n    {\r\n        // Ruta de la imagen del encabezado\r\n        $rutaCabeceraImagen = storage_path() . '/files/templates/caratulas/cabecera.png';\r\n\r\n        // Se valida que exista la imagen\r\n        if (!file_exists($rutaCabeceraImagen)) {\r\n            return [\r\n                \"error\" => \"La imagen de la firma no existe o la ruta no es valida\"\r\n            ];\r\n        }\r\n\r\n        // Se consulta la informacion de tipos de unidades\r\n        $arrayInformacion = TipoUnidadModel::where(\"estado\", \"1\")->get();\r\n\r\n        // Se inicializa la instancia de la clase de phpword\r\n        $phpWord = new \\PhpOffice\\PhpWord\\PhpWord();\r\n\r\n        // Agregando una sección vacía al documento\r\n        $section = $phpWord->addSection();\r\n\r\n        // Se agrega la imagen de la cabecera al documento\r\n        $footer = $section->addHeader();\r\n        $footer->addImage(\r\n            $rutaCabeceraImagen,\r\n            array(\r\n                'width'         => 250,\r\n                'height'        => 90,\r\n                'alignment' => \\PhpOffice\\PhpWord\\SimpleType\\Jc::CENTER\r\n            )\r\n        );\r\n\r\n        // Agregar texto de la cabecera\r\n        $section->addText(\r\n            '<w:br/> CARATULA SISTEMAS DISCIPLINARIOS <w:br/> <w:br/>',\r\n            [\r\n                'name' => 'Arial',\r\n                'size' => '12',\r\n                'bold' => TRUE,\r\n                'align' => 'center',\r\n                'marginTop' => 10\r\n            ],\r\n            [\r\n                'align' => 'center',\r\n            ]\r\n        );\r\n\r\n        // Se crea la tabla\r\n        $tableStyle = array(\r\n            'borderColor' => '000000',\r\n            'borderSize'  => 10,\r\n            'cellMargin'  => 100,\r\n            'bold' => true,\r\n            'align' => 'center',\r\n        );\r\n        $firstRowStyle = array('bgColor' => 'FFFFFF');\r\n        $phpWord->addTableStyle('x', $tableStyle, $firstRowStyle);\r\n        $table = $section->addTable(\"x\");\r\n\r\n        // Se cuenta la cantidad de filas\r\n        $cantidadFilas = count($arrayInformacion);\r\n        $cantidadColumnas = 2;\r\n\r\n        // Se recorre la cantidad de filas\r\n        for ($f = 0; $f <= $cantidadFilas - 1; $f++) {\r\n\r\n            // Se captura la informacion por posición\r\n            $data = $arrayInformacion[$f];\r\n\r\n            // Se tiene en cuenta el numero de la fila\r\n            $numeroFila = $f;\r\n\r\n            // Se añade la fila\r\n            $table->addRow();\r\n\r\n            // Se recorre la cantidad de columnas\r\n            for ($c = 0; $c <= $cantidadColumnas; $c++) {\r\n\r\n                // Se tiene en cuenta el numero de la columna\r\n                $numeroColumna = $c;\r\n\r\n                // Se valida para insertar el dato en la columna\r\n                if ($numeroColumna == 0) {\r\n                    $table->addCell(3000)->addText($data[\"nombre\"], [\"bold\" => true], ['align' => 'center']);\r\n                } else if ($numeroColumna == 1) {\r\n                    $table->addCell(1000)->addText($data[\"codigo_unidad\"], [], ['align' => 'center']);\r\n                } else if ($numeroColumna == 2) {\r\n\r\n                    // Se valida el numero de la fila para insertar el texto valido\r\n                    if ($numeroFila == 0) {\r\n                        $table->addCell(5000)->addText(\"NOMBRE UNIDAD ADMINISTRATIVA: <w:br/>\" . \"             \" . $data[\"descripcion_unidad\"], [\"bold\" => true]);\r\n                    } else if ($numeroFila == 1) {\r\n                        $table->addCell(5000)->addText(\"NOMBRE OFICINA PRODUCTORA: <w:br/>\" . \"             \" . $data[\"descripcion_unidad\"], [\"bold\" => true]);\r\n                    } else if ($numeroFila == 2) {\r\n                        $table->addCell(5000)->addText(\"NOMBRE SERIE DOCUMENTAL: <w:br/>\" . \"             \" . $data[\"descripcion_unidad\"], [\"bold\" => true]);\r\n                    } else if ($numeroFila == 3) {\r\n                        $table->addCell(5000)->addText(\"NOMBRE SUBSERIE DOCUMENTAL: <w:br/>\" . \"             \" . $data[\"descripcion_unidad\"], [\"bold\" => true]);\r\n                    } else {\r\n                        continue;\r\n                    }\r\n                } else {\r\n                    continue;\r\n                }\r\n            }\r\n        }\r\n\r\n        // Se crea la tabla de descripcion del expediente\r\n        // Agregar texto de la descripcion del expediente\r\n        $section->addText(\r\n            '<w:br/> <w:br/> DESCRIPCIÖN DEL EXPEDIENTE <w:br/> <w:br/>',\r\n            [\r\n                'name' => 'Arial',\r\n                'size' => '12',\r\n                'align' => 'center',\r\n                'marginTop' => 10\r\n            ],\r\n            [\r\n                'align' => 'center',\r\n            ]\r\n        );\r\n\r\n        $table = $section->addTable(\"x\");\r\n        $cantidadFilasDescripcionExpediente = 1;\r\n        $cantidadColumnasDescripcionExpediente = 1;\r\n\r\n        // Se captura la informacion del expediente\r\n        $informacionGeneralProcesoDisciplinario = isset($arrayInformacionProcesoDisciplinario[\"informacionGeneralProcesoDisciplinario\"][0]) ? $arrayInformacionProcesoDisciplinario[\"informacionGeneralProcesoDisciplinario\"][0] : [];\r\n        $informacionEntidadInvestigado = isset($arrayInformacionProcesoDisciplinario[\"informacionEntidadInvestigado\"][0]) ? $arrayInformacionProcesoDisciplinario[\"informacionEntidadInvestigado\"][0] : [];\r\n\r\n        // Se recorre la cantidad de filas\r\n        for ($f = 0; $f <= $cantidadFilasDescripcionExpediente - 1; $f++) {\r\n\r\n            // Se añade la fila\r\n            $table->addRow();\r\n\r\n            // Se tiene en cuenta el numero de la fila\r\n            $numeroFila = $f;\r\n\r\n            // Se recorre la cantidad de columnas\r\n            for ($c = 0; $c <= $cantidadColumnasDescripcionExpediente; $c++) {\r\n\r\n                // Se tiene en cuenta el numero de la columna\r\n                $numeroColumna = $c;\r\n\r\n                // Valida la columna para escribir el valor en el campo\r\n                if ($numeroColumna == 0) {\r\n                    $table->addCell(5000)->addText(\"IDENTIFICACIÓN DEL EXPEDIENTE\", [\"bold\" => true], ['align' => 'center']);\r\n                } else if ($numeroColumna == 1) {\r\n                    $table->addCell(5000)->addText(\r\n                        $informacionGeneralProcesoDisciplinario[\"radicado\"] . \" - \" . $informacionGeneralProcesoDisciplinario[\"vigencia\"] . \" <w:br/> \" .\r\n                            ($informacionEntidadInvestigado == [] ?\r\n                                \"<w:br/> SIN ENTIDAD <w:br/>\" :\r\n                                \"<w:br/> \" . $informacionEntidadInvestigado[\"nombre_investigado\"] . \" - \" . $informacionEntidadInvestigado[\"cargo\"] . \" <w:br/> \"),\r\n                        [],\r\n                        ['align' => 'center']\r\n                    );\r\n                } else {\r\n                    continue;\r\n                }\r\n            }\r\n        }\r\n\r\n        // Ruta de almacenado\r\n        $guid =  bin2hex(openssl_random_pseudo_bytes(16));\r\n        $source = storage_path() . '/files/temp/' . $guid . '.docx';\r\n\r\n        // Se guarda el word\r\n        $objWriter = \\PhpOffice\\PhpWord\\IOFactory::createWriter($phpWord);\r\n        $objWriter->save($source);\r\n\r\n        // Se retorna la ruta\r\n        $return = [\r\n            \"word\" => $source,\r\n        ];\r\n\r\n        return $return;\r\n    }\r\n}
+Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
+<+>UTF-8
+===================================================================
+--- app/Services/WordServices.php	(revision afe7d11b447449a003baadfcca1901de62405038)
++++ app/Services/WordServices.php	(date 1663155892080)
+@@ -7,7 +7,6 @@
+ use PhpOffice\PhpWord\IOFactory;
+ use PhpOffice\PhpWord\Settings;
+ use PhpOffice\PhpWord\PhpWord;
+-use App\Models\TipoUnidadModel;
+ 
+ class WordServices
+ {
+@@ -220,22 +219,13 @@
+     /**
+      * Retorna plantilla diligenciada con valores de parametros enviados en request
+      */
+-    public function wordDocImages($data)
++    public function wordDocImages($nombreArchivo, $nombreArchivoFirma)
+     {
+ 
+-        error_log("data -> " . json_encode($data));
+-
+-        // Se inicializa la informacion en variables
+-        $idActuacion = $data["id_actuacion"];
+-        $nombreArchivoDocumento = $data["nombre_documento"];
+-        $nombreArchivoFirma = $data["ruta_image"];
+-
+-        // Se busca el documento
+-        $pathDocumento = storage_path() . $nombreArchivoDocumento;
+-        $pathImages = storage_path() . '/files/firmas/firma1_9F782C2.png';
++        $pathDocumento = storage_path() . $nombreArchivo;
++        $pathImages = storage_path() . '/files/firmas/' . $nombreArchivoFirma;
+ 
+         error_log("---------------------------------------------------------------");
+-        error_log("idActuacion   -> " . $idActuacion);
+         error_log("pathDocumento -> " . $pathDocumento);
+         error_log("pathImages    -> " . $pathImages);
+ 
+@@ -253,342 +243,101 @@
+             ];
+         }
+ 
+-        error_log("llego al die");
+-
+         // Se inicializan las variables nuevamente
+         $filename = $pathDocumento;
++        $guid =  bin2hex(openssl_random_pseudo_bytes(16));
++        $source = storage_path() . '/files/temp/' . $guid . '.pdf';
++
++        // Se renderiza el DoomPdf
++        Settings::setPdfRendererName(Settings::PDF_RENDERER_DOMPDF);
++        Settings::setPdfRendererPath('.');
++        $domPdfPath = realpath(realpath(__DIR__) . '/../vendor/dompdf/dompdf');
++        \PhpOffice\PhpWord\Settings::setPdfRendererPath($domPdfPath);
++        \PhpOffice\PhpWord\Settings::setPdfRendererName('DomPDF');
+ 
+         // Se carga el archivo word 
+-        $phpWord = new TemplateProcessor($filename);
++        $phpWord = \PhpOffice\PhpWord\IOFactory::load($filename);
+ 
+-        // Se añade la imagen
+-        $phpWord->setImageValue(
+-            'imagenAprobo',
++        // Se añade una seccion
++        $section = $phpWord->addSection();
++
++        // Se añade la imagen con sus dimensiones
++        $section->addImage(
++            $pathImages,
+             array(
+-                'path' => $pathImages,
+-                'width' => 100,
+-                'height' => 100,
+-                'ratio' => false
+-            )
++                'width' => 580,
++                'height' => 140,
++                'positioning' => \PhpOffice\PhpWord\Style\Image::POSITION_ABSOLUTE,
++                'posHorizontal' => \PhpOffice\PhpWord\Style\Image::POSITION_ABSOLUTE,
++                'posVertical' => \PhpOffice\PhpWord\Style\Image::POSITION_ABSOLUTE,
++                'marginLeft' => round(\PhpOffice\PhpWord\Shared\Converter::cmToPixel(17)),
++                'marginTop' => round(\PhpOffice\PhpWord\Shared\Converter::cmToPixel(-0.5)),
++                'wrappingStyle' => 'infront'
++            ),
++            true
+         );
+ 
+-        $imagenReviso = '${imagenReviso}';
+-        $imagenReviso2 = '${imagenReviso2}';
+-        $imagenReviso3 = '${imagenReviso3}';
+-
+-        // $phpWord->setImageValue(
+-        //     "imagenReviso",
+-        //     array(
+-        //         'path' => $pathImages,
+-        //         'width' => 100,
+-        //         'height' => 100,
+-        //         'ratio' => true
+-        //     )
+-        // );
+-
+-        // $phpWord->setImageValue(
+-        //     "imagenReviso2",
+-        //     array(
+-        //         'path' => $pathImages,
+-        //         'width' => 100,
+-        //         'height' => 100,
+-        //         'ratio' => true
+-        //     )
+-        // );
+-
+-        // $phpWord->setImageValue(
+-        //     'imagenReviso3',
+-        //     array(
+-        //         'path' => $pathImages,
+-        //         'width' => 100,
+-        //         'height' => 100,
+-        //         'ratio' => true
+-        //     )
+-        // );
++        // Se inicializa la pagina en 1
++        // Method 1
++        $section = $phpWord->addSection(array('pageNumberingStart' => 1));
+ 
+-        $phpWord->setValue("${imagenReviso}", '11');
++        // Method 2
++        $section->getStyle()->setPageNumberingStart(1);
+ 
+-        $phpWord->setImageValue(
+-            '${imagenElaboro}',
+-            array(
+-                'path' => $pathImages,
+-                'width' => 100,
+-                'height' => 100,
+-                'ratio' => false
+-            )
+-        );
++        error_log("llego aqui");
+ 
+-        // Ruta de almacenado
+-        $guid =  bin2hex(openssl_random_pseudo_bytes(16));
+-        $source = storage_path() . '/files/temp/' . $guid . '.docx';
++        // Se crea una escritura del archivo en PDF
++        $objWriter = \PhpOffice\PhpWord\IOFactory::createWriter($phpWord, 'PDF');
+ 
+-        // Se guarda el documento
+-        $phpWord->saveAs($source);
++        // Se guarda el archivo en la ruta 
++        $objWriter->save($source);
+ 
+-        error_log("source -> " . $source);
++        // Se retorna la ruta del array del pdf y word para eliminarlos
++        $links = [
++            "word" => $filename,
++            "pdf" => $source
++        ];
+ 
+-        // Se carga el archivo word 
+-        // $phpWord = new \PhpOffice\PhpWord\PhpWord();
+-        // $phpWord = $phpWord->loadTemplate($filename);
++        // Se retorna el valor de la ruta
++        return $links;
+ 
+-        // // Se añade una seccion
++        // Se añade la seccion de la imagen
+         // $section = $phpWord->addSection();
+ 
+-        // // Se crea la tabla
+-        // $tableStyle = array(
+-        //     'borderColor' => '000000',
+-        //     'borderSize'  => 10,
+-        //     'cellMargin'  => 100,
+-        //     'bold' => true,
+-        //     'align' => 'center',
+-        // );
+-        // $firstRowStyle = array('bgColor' => 'FFFFFF');
+-        // $phpWord->addTableStyle('x', $tableStyle, $firstRowStyle);
+-        // $table = $section->addTable();
+-
+-        // // Se cuenta la cantidad de filas
+-        // $cantidadFilas = 1;
+-        // $cantidadColumnas = 1;
+-
+-        // // Se recorre la cantidad de filas
+-        // for ($f = 0; $f <= $cantidadFilas - 1; $f++) {
+-
+-        //     // Se tiene en cuenta el numero de la fila
+-        //     $numeroFila = $f;
+-
+-        //     // Se añade la fila
+-        //     $table->addRow();
+-
+-        //     // Se recorre la cantidad de columnas
+-        //     for ($c = 0; $c <= $cantidadColumnas; $c++) {
+-
+-        //         // Se tiene en cuenta el numero de la columna
+-        //         $numeroColumna = $c;
+-
+-        //         // Se valida para insertar el dato en la columna
+-        //         if ($numeroColumna == 0) {
+-        //             $table->addCell(3000)->addText("Aprobo", ["bold" => true], ['align' => 'center']);
+-        //         } else if ($numeroColumna == 1) {
+-        //             $table->addCell(1000)->addText("Reviso", [], ['align' => 'center']);
+-        //         } else if ($numeroColumna == 2) {
+-        //             $table->addCell(5000)->addText("Elaboro", ["bold" => true]);
+-        //         } else {
+-        //             continue;
+-        //         }
+-        //     }
+-        // }
+-
+         // Se añade la imagen con sus dimensiones
+         // $section->addImage(
+         //     $pathImages,
+         //     array(
+-        //         'width' => 580,
+-        //         'height' => 140,
+-        //         'positioning' => \PhpOffice\PhpWord\Style\Image::POSITION_ABSOLUTE,
+-        //         'posHorizontal' => \PhpOffice\PhpWord\Style\Image::POSITION_ABSOLUTE,
+-        //         'posVertical' => \PhpOffice\PhpWord\Style\Image::POSITION_ABSOLUTE,
+-        //         'marginLeft' => round(\PhpOffice\PhpWord\Shared\Converter::cmToPixel(17)),
+-        //         'marginTop' => round(\PhpOffice\PhpWord\Shared\Converter::cmToPixel(-0.5)),
+-        //         'wrappingStyle' => 'infront'
+-        //     ),
+-        //     true
++        //         'width'         => 100,
++        //         'height'        => 100,
++        //         'marginTop'     => -1,
++        //         'marginLeft'    => -1,
++        //         'wrappingStyle' => 'behind'
++        //     )
+         // );
+ 
+-        // // Se guarda el word
+-        // $objWriter = \PhpOffice\PhpWord\IOFactory::createWriter($phpWord, "Word2007");
+-        // $objWriter->save($source);
++        // $guid =  bin2hex(openssl_random_pseudo_bytes(16));
++        // $routeSavePdf = storage_path() . '/files/temp/' . $guid . '.docx';
++
++        // $objWriter = \PhpOffice\PhpWord\IOFactory::createWriter($phpWord, 'Word2007');
++        // $objWriter->save($routeSavePdf);
+ 
+-        // Se retorna la ruta del array del pdf y word para eliminarlos
+-        $links = [
+-            "word" => $source,
+-        ];
++        error_log("Guardo");
+ 
+-        error_log("guardo");
++        // $datos['file_name'] = $caratula->nombre . ".pdf";
++        // $datos['content_type'] = "application/pdf";
++        // $datos["params"] = $params;
++        // $datos["base_64"] = base64_encode(file_get_contents($result["pdf"]));
+ 
+-        // Se retorna el valor de la ruta
+-        return $links;
++        // // Se eliminan los archivo de tmp
++        // if (unlink($result["pdf"])) {
++        //     error_log("Se elimino el pdf");
++        // }
++
++        // if (unlink($result["word"])) {
++        //     error_log("Se elimino el word");
++        // }
+ 
+         // return response()->json($datos);
+     }
+-
+-    /**
+-     * Metodo encargado de generar la segunda caratula dentro de ramas del proceso
+-     */
+-    public function generarCaratula($arrayInformacionProcesoDisciplinario = [])
+-    {
+-        // Ruta de la imagen del encabezado
+-        $rutaCabeceraImagen = storage_path() . '/files/templates/caratulas/cabecera.png';
+-
+-        // Se valida que exista la imagen
+-        if (!file_exists($rutaCabeceraImagen)) {
+-            return [
+-                "error" => "La imagen de la firma no existe o la ruta no es valida"
+-            ];
+-        }
+-
+-        // Se consulta la informacion de tipos de unidades
+-        $arrayInformacion = TipoUnidadModel::where("estado", "1")->get();
+-
+-        // Se inicializa la instancia de la clase de phpword
+-        $phpWord = new \PhpOffice\PhpWord\PhpWord();
+-
+-        // Agregando una sección vacía al documento
+-        $section = $phpWord->addSection();
+-
+-        // Se agrega la imagen de la cabecera al documento
+-        $footer = $section->addHeader();
+-        $footer->addImage(
+-            $rutaCabeceraImagen,
+-            array(
+-                'width'         => 250,
+-                'height'        => 90,
+-                'alignment' => \PhpOffice\PhpWord\SimpleType\Jc::CENTER
+-            )
+-        );
+-
+-        // Agregar texto de la cabecera
+-        $section->addText(
+-            '<w:br/> CARATULA SISTEMAS DISCIPLINARIOS <w:br/> <w:br/>',
+-            [
+-                'name' => 'Arial',
+-                'size' => '12',
+-                'bold' => TRUE,
+-                'align' => 'center',
+-                'marginTop' => 10
+-            ],
+-            [
+-                'align' => 'center',
+-            ]
+-        );
+-
+-        // Se crea la tabla
+-        $tableStyle = array(
+-            'borderColor' => '000000',
+-            'borderSize'  => 10,
+-            'cellMargin'  => 100,
+-            'bold' => true,
+-            'align' => 'center',
+-        );
+-        $firstRowStyle = array('bgColor' => 'FFFFFF');
+-        $phpWord->addTableStyle('x', $tableStyle, $firstRowStyle);
+-        $table = $section->addTable("x");
+-
+-        // Se cuenta la cantidad de filas
+-        $cantidadFilas = count($arrayInformacion);
+-        $cantidadColumnas = 2;
+-
+-        // Se recorre la cantidad de filas
+-        for ($f = 0; $f <= $cantidadFilas - 1; $f++) {
+-
+-            // Se captura la informacion por posición
+-            $data = $arrayInformacion[$f];
+-
+-            // Se tiene en cuenta el numero de la fila
+-            $numeroFila = $f;
+-
+-            // Se añade la fila
+-            $table->addRow();
+-
+-            // Se recorre la cantidad de columnas
+-            for ($c = 0; $c <= $cantidadColumnas; $c++) {
+-
+-                // Se tiene en cuenta el numero de la columna
+-                $numeroColumna = $c;
+-
+-                // Se valida para insertar el dato en la columna
+-                if ($numeroColumna == 0) {
+-                    $table->addCell(3000)->addText($data["nombre"], ["bold" => true], ['align' => 'center']);
+-                } else if ($numeroColumna == 1) {
+-                    $table->addCell(1000)->addText($data["codigo_unidad"], [], ['align' => 'center']);
+-                } else if ($numeroColumna == 2) {
+-
+-                    // Se valida el numero de la fila para insertar el texto valido
+-                    if ($numeroFila == 0) {
+-                        $table->addCell(5000)->addText("NOMBRE UNIDAD ADMINISTRATIVA: <w:br/>" . "             " . $data["descripcion_unidad"], ["bold" => true]);
+-                    } else if ($numeroFila == 1) {
+-                        $table->addCell(5000)->addText("NOMBRE OFICINA PRODUCTORA: <w:br/>" . "             " . $data["descripcion_unidad"], ["bold" => true]);
+-                    } else if ($numeroFila == 2) {
+-                        $table->addCell(5000)->addText("NOMBRE SERIE DOCUMENTAL: <w:br/>" . "             " . $data["descripcion_unidad"], ["bold" => true]);
+-                    } else if ($numeroFila == 3) {
+-                        $table->addCell(5000)->addText("NOMBRE SUBSERIE DOCUMENTAL: <w:br/>" . "             " . $data["descripcion_unidad"], ["bold" => true]);
+-                    } else {
+-                        continue;
+-                    }
+-                } else {
+-                    continue;
+-                }
+-            }
+-        }
+-
+-        // Se crea la tabla de descripcion del expediente
+-        // Agregar texto de la descripcion del expediente
+-        $section->addText(
+-            '<w:br/> <w:br/> DESCRIPCIÖN DEL EXPEDIENTE <w:br/> <w:br/>',
+-            [
+-                'name' => 'Arial',
+-                'size' => '12',
+-                'align' => 'center',
+-                'marginTop' => 10
+-            ],
+-            [
+-                'align' => 'center',
+-            ]
+-        );
+-
+-        $table = $section->addTable("x");
+-        $cantidadFilasDescripcionExpediente = 1;
+-        $cantidadColumnasDescripcionExpediente = 1;
+-
+-        // Se captura la informacion del expediente
+-        $informacionGeneralProcesoDisciplinario = isset($arrayInformacionProcesoDisciplinario["informacionGeneralProcesoDisciplinario"][0]) ? $arrayInformacionProcesoDisciplinario["informacionGeneralProcesoDisciplinario"][0] : [];
+-        $informacionEntidadInvestigado = isset($arrayInformacionProcesoDisciplinario["informacionEntidadInvestigado"][0]) ? $arrayInformacionProcesoDisciplinario["informacionEntidadInvestigado"][0] : [];
+-
+-        // Se recorre la cantidad de filas
+-        for ($f = 0; $f <= $cantidadFilasDescripcionExpediente - 1; $f++) {
+-
+-            // Se añade la fila
+-            $table->addRow();
+-
+-            // Se tiene en cuenta el numero de la fila
+-            $numeroFila = $f;
+-
+-            // Se recorre la cantidad de columnas
+-            for ($c = 0; $c <= $cantidadColumnasDescripcionExpediente; $c++) {
+-
+-                // Se tiene en cuenta el numero de la columna
+-                $numeroColumna = $c;
+-
+-                // Valida la columna para escribir el valor en el campo
+-                if ($numeroColumna == 0) {
+-                    $table->addCell(5000)->addText("IDENTIFICACIÓN DEL EXPEDIENTE", ["bold" => true], ['align' => 'center']);
+-                } else if ($numeroColumna == 1) {
+-                    $table->addCell(5000)->addText(
+-                        $informacionGeneralProcesoDisciplinario["radicado"] . " - " . $informacionGeneralProcesoDisciplinario["vigencia"] . " <w:br/> " .
+-                            ($informacionEntidadInvestigado == [] ?
+-                                "<w:br/> SIN ENTIDAD <w:br/>" :
+-                                "<w:br/> " . $informacionEntidadInvestigado["nombre_investigado"] . " - " . $informacionEntidadInvestigado["cargo"] . " <w:br/> "),
+-                        [],
+-                        ['align' => 'center']
+-                    );
+-                } else {
+-                    continue;
+-                }
+-            }
+-        }
+-
+-        // Ruta de almacenado
+-        $guid =  bin2hex(openssl_random_pseudo_bytes(16));
+-        $source = storage_path() . '/files/temp/' . $guid . '.docx';
+-
+-        // Se guarda el word
+-        $objWriter = \PhpOffice\PhpWord\IOFactory::createWriter($phpWord);
+-        $objWriter->save($source);
+-
+-        // Se retorna la ruta
+-        $return = [
+-            "word" => $source,
+-        ];
+-
+-        return $return;
+-    }
+ }
+\ No newline at end of file

@@ -1,0 +1,26 @@
+<?php
+
+namespace App\Http\Resources\FirmaActuaciones;
+
+use Illuminate\Http\Resources\Json\JsonResource;
+
+class DocumentosParaFirmaResource extends JsonResource
+{
+    /**
+     * Transform the resource into an array.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return array|\Illuminate\Contracts\Support\Arrayable|\JsonSerializable
+     */
+    public function toArray($request)
+    {
+        return [
+            "type" => "firma_actuaciones",
+            "id" => $this->resource->getRouteKey(),
+            "attributes" => [
+                "id_actuacion" => $this->resource->actuacion->uuid(),
+                "nombre_actuacion" => $this->resource->nombreActuacion(),
+
+        ];
+    }
+}

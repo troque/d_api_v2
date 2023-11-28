@@ -1,0 +1,31 @@
+{
+    "openapi": "3.0.0",
+    "info": {
+        "title": "API LoginLdap",
+        "version": "1.0"
+    },
+    "servers": [
+        {
+            "url": "https://127.0.0.1:8000"
+        }
+    ],
+    "paths": {
+        "/api/v1/Login-Ldap/currentuser": {
+            "get": {
+                "summary": "Mostrar usuarios",
+                "operationId": "a73f3b49e27d963a412ededc8acd689b",
+                "responses": {
+                    "200": {
+                        "description": "Mostrar todos los usuarios."
+                    },
+                    "default": {
+                        "description": "Ha ocurrido un error."
+                    }
+                }
+            }
+        }
+    },
+    "security": [
+        []
+    ]
+}

@@ -1,0 +1,24 @@
+/node_modules
+/public/hot
+/public/storage
+/storage/*.key
+/vendor
+.env
+.env.backup
+.phpunit.result.cache
+docker-compose.override.yml
+Homestead.json
+Homestead.yaml
+npm-debug.log
+yarn-error.log
+/.idea
+/.vscode
+/storage/files/2005
+/storage/files/2009
+/storage/files/2020
+/storage/files/2021
+/storage/files/2022
+/storage/files/4536
+/storage/files/Captura y Reparto
+/storage/files/Gestor Respuesta
+/.history
